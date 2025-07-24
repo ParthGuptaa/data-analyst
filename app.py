@@ -43,9 +43,14 @@ def get_data_summary(df):
     summary_text += "**Random Samples (up to 5 per column):**\n"
     
     for col in df.columns:
-        samples = df[col].dropna().sample(min(5, len(df[col].dropna()))).tolist()
-        summary_text += f"- **{col}:** `{samples}`\n"
-        
+        # Ensure we don't sample more than the available unique values
+        sample_count = min(5, len(df[col].dropna().unique()))
+        if sample_count > 0:
+            samples = df[col].dropna().sample(sample_count).tolist()
+            summary_text += f"- **{col}:** `{samples}`\n"
+        else:
+            summary_text += f"- **{col}:** `(No data to sample)`\n"
+            
     return summary_text
 
 def run_data_quality_check(df):
@@ -56,7 +61,7 @@ def run_data_quality_check(df):
     missing_values = df.isnull().sum()
     missing_percentage = (missing_values / len(df)) * 100
     missing_df = pd.DataFrame({'Missing Count': missing_values, 'Percentage (%)': missing_percentage})
-    missing_df = missing_df[missing_df['Missing Count'] > 0]
+    missing_df = missing_df[missing_df['Missing Count'] > 0].sort_values(by='Missing Count', ascending=False)
     
     if not missing_df.empty:
         dq_report += "**Missing Values:**\n"
@@ -68,20 +73,24 @@ def run_data_quality_check(df):
     dq_report += "**Potential Outliers (using IQR method):**\n"
     numeric_cols = df.select_dtypes(include=['number']).columns
     outlier_found = False
-    for col in numeric_cols:
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-        outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
-        if not outliers.empty:
-            dq_report += f"- Column '{col}': Found {len(outliers)} potential outliers.\n"
-            outlier_found = True
-    if not outlier_found:
-        dq_report += "No significant outliers detected in numeric columns.\n\n"
+    if len(numeric_cols) > 0:
+        for col in numeric_cols:
+            Q1 = df[col].quantile(0.25)
+            Q3 = df[col].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
+            if not outliers.empty:
+                dq_report += f"- Column **'{col}'**: Found {len(outliers)} potential outliers.\n"
+                outlier_found = True
+        if not outlier_found:
+            dq_report += "No significant outliers detected in numeric columns.\n\n"
+    else:
+        dq_report += "No numeric columns available for outlier detection.\n\n"
 
-    # Data Type Issues (e.g., object type for what should be numeric/datetime)
+
+    # Data Format & Type Check
     dq_report += "**Data Format & Type Check:**\n"
     dq_report += "General data types seem appropriate based on initial load. Further validation might be needed for columns with 'object' type if they are expected to be numeric or dates.\n"
     
@@ -119,7 +128,7 @@ def generate_visualizations(df):
         st.write("#### Histograms for Numeric Columns")
         for col in numeric_cols:
             fig, ax = plt.subplots()
-            sns.histplot(df[col], kde=True, ax=ax)
+            sns.histplot(df[col].dropna(), kde=True, ax=ax)
             ax.set_title(f'Distribution of {col}')
             st.pyplot(fig)
     else:
@@ -144,18 +153,24 @@ def generate_visualizations(df):
 st.title("📊 Agentic AI Data Analyst")
 st.markdown("""
 Welcome! I'm an AI agent designed to help you with initial data analysis. 
-Upload your Excel file, and I'll perform a preliminary analysis covering:
+Upload your Excel or CSV file, and I'll perform a preliminary analysis covering:
 1.  **Data Summary & Samples:** Understand the structure and content.
 2.  **Data Quality Check:** Find missing values and potential outliers.
 3.  **Insightful Questions:** Suggest key business questions the data can answer.
 4.  **Visualizations:** Generate basic plots to see the distributions.
 """)
 
-uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
+# FIX 1: Accept both .csv and .xlsx files
+uploaded_file = st.file_uploader("Choose an Excel or CSV file", type=["xlsx", "csv"])
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
+        # FIX 2: Check the file extension to use the correct pandas function
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+            
         st.success("File uploaded and loaded successfully!")
         
         st.write("### Raw Data Preview")
@@ -182,4 +197,5 @@ if uploaded_file is not None:
             st.success("Analysis Complete!")
 
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"An error occurred while processing the file: {e}")
+
