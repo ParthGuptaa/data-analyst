@@ -32,26 +32,36 @@ else:
 # --- Helper Functions (The Agent's "Tools") ---
 
 def get_data_summary(df):
-    """Generates a text summary and samples of the dataframe."""
-    buffer = io.StringIO()
-    df.info(buf=buffer)
-    info_str = buffer.getvalue()
-    
-    summary_text = "### 1. Data Overview & Random Samples\n\n"
-    summary_text += f"**Shape of the dataset:** {df.shape[0]} rows and {df.shape[1]} columns.\n\n"
-    summary_text += "**Column Information & Data Types:**\n```\n" + info_str + "\n```\n\n"
-    summary_text += "**Random Samples (up to 5 per column):**\n"
-    
-    for col in df.columns:
-        # Ensure we don't sample more than the available unique values
-        sample_count = min(5, len(df[col].dropna().unique()))
-        if sample_count > 0:
-            samples = df[col].dropna().sample(sample_count).tolist()
-            summary_text += f"- **{col}:** `{samples}`\n"
-        else:
-            summary_text += f"- **{col}:** `(No data to sample)`\n"
-            
-    return summary_text
+    """
+    FIX 2: Generates a concise, professional summary of the dataframe inside an expander.
+    """
+    summary_report = "### 1. Data Overview\n\n"
+    summary_report += f"The dataset contains **{df.shape[0]} rows** and **{df.shape[1]} columns.**\n\n"
+
+    # Create a concise summary dataframe
+    summary_df = pd.DataFrame({
+        'Non-Null Count': df.count(),
+        'Data Type': df.dtypes
+    }).reset_index().rename(columns={'index': 'Column Name'})
+
+    with st.expander("Click to see Column Details and Random Samples"):
+        st.markdown("**Column Data Types & Non-Null Counts:**")
+        st.dataframe(summary_df, use_container_width=True)
+        
+        st.markdown("**Random Samples (up to 5 per column):**")
+        sample_md = ""
+        for col in df.columns:
+            # Ensure we don't sample more than the available unique values
+            sample_count = min(5, len(df[col].dropna().unique()))
+            if sample_count > 0:
+                samples = df[col].dropna().sample(sample_count).tolist()
+                sample_md += f"- **{col}:** `{samples}`\n"
+            else:
+                sample_md += f"- **{col}:** `(No data to sample)`\n"
+        st.markdown(sample_md)
+        
+    return summary_report
+
 
 def run_data_quality_check(df):
     """Performs a data quality check on the dataframe."""
@@ -65,9 +75,11 @@ def run_data_quality_check(df):
     
     if not missing_df.empty:
         dq_report += "**Missing Values:**\n"
-        dq_report += missing_df.to_markdown() + "\n\n"
+        dq_report += "Found missing values in one or more columns. Addressing these is crucial for accurate analysis.\n"
+        st.dataframe(missing_df) # Using st.dataframe for better formatting
+        dq_report += "\n"
     else:
-        dq_report += "**Missing Values:**\nNo missing values found. Great!\n\n"
+        dq_report += "**Missing Values:**\n✅ No missing values found. Great!\n\n"
         
     # Outlier Detection (simple IQR method for numeric columns)
     dq_report += "**Potential Outliers (using IQR method):**\n"
@@ -82,23 +94,19 @@ def run_data_quality_check(df):
             upper_bound = Q3 + 1.5 * IQR
             outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
             if not outliers.empty:
-                dq_report += f"- Column **'{col}'**: Found {len(outliers)} potential outliers.\n"
+                dq_report += f"- ⚠️ Column **'{col}'**: Found {len(outliers)} potential outliers.\n"
                 outlier_found = True
         if not outlier_found:
-            dq_report += "No significant outliers detected in numeric columns.\n\n"
+            dq_report += "✅ No significant outliers detected in numeric columns.\n\n"
     else:
-        dq_report += "No numeric columns available for outlier detection.\n\n"
-
-
-    # Data Format & Type Check
-    dq_report += "**Data Format & Type Check:**\n"
-    dq_report += "General data types seem appropriate based on initial load. Further validation might be needed for columns with 'object' type if they are expected to be numeric or dates.\n"
+        dq_report += "ℹ️ No numeric columns available for outlier detection.\n\n"
     
     return dq_report
 
 def get_interesting_questions(df_head):
     """Generates interesting questions using the LLM."""
-    llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.7)
+    # FIX 1: Switched to a more recent and stable model name
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.7)
     
     prompt_template = PromptTemplate(
         input_variables=['df_head'],
@@ -153,19 +161,13 @@ def generate_visualizations(df):
 st.title("📊 Agentic AI Data Analyst")
 st.markdown("""
 Welcome! I'm an AI agent designed to help you with initial data analysis. 
-Upload your Excel or CSV file, and I'll perform a preliminary analysis covering:
-1.  **Data Summary & Samples:** Understand the structure and content.
-2.  **Data Quality Check:** Find missing values and potential outliers.
-3.  **Insightful Questions:** Suggest key business questions the data can answer.
-4.  **Visualizations:** Generate basic plots to see the distributions.
+Upload your Excel or CSV file, and I'll perform a preliminary analysis.
 """)
 
-# FIX 1: Accept both .csv and .xlsx files
 uploaded_file = st.file_uploader("Choose an Excel or CSV file", type=["xlsx", "csv"])
 
 if uploaded_file is not None:
     try:
-        # FIX 2: Check the file extension to use the correct pandas function
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
@@ -178,13 +180,15 @@ if uploaded_file is not None:
         
         if st.button("🚀 Start Analysis", key="start_analysis_button"):
             # --- Agentic Chain Execution ---
-            with st.spinner("Step 1/4: Generating data summary and samples..."):
+            with st.spinner("Step 1/4: Generating data overview..."):
+                # This function now uses st.expander internally
                 summary_report = get_data_summary(df)
                 st.markdown(summary_report)
 
             with st.spinner("Step 2/4: Running data quality checks..."):
+                # This function now uses st.dataframe for the missing values table
                 quality_report = run_data_quality_check(df)
-                st.markdown(quality_report)
+                st.markdown(quality_report, unsafe_allow_html=True)
                 
             with st.spinner("Step 3/4: Brainstorming insightful questions with Gemini..."):
                 questions_report = get_interesting_questions(df.head())
